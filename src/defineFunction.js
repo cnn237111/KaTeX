@@ -16,7 +16,8 @@ export type FunctionContext = {|
 |};
 
 // TODO: Enumerate all allowed output types.
-export type FunctionHandler = (context: FunctionContext, args: ParseNode[]) => *;
+export type FunctionHandler = (
+    context: FunctionContext, args: ParseNode[], parentBody: ParseNode[]) => *;
 
 export type FunctionPropSpec = {
     // The number of arguments the function takes.

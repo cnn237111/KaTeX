@@ -309,8 +309,7 @@ defineFunction([
 
 // Limits, not symbols
 defineFunction([
-    "\\det", "\\gcd", "\\inf", "\\lim", "\\liminf", "\\limsup", "\\max",
-    "\\min", "\\Pr", "\\sup",
+    "\\det", "\\gcd", "\\inf", "\\lim", "\\max", "\\min", "\\Pr", "\\sup",
 ], {
     numArgs: 0,
 }, function(context) {
@@ -363,6 +362,50 @@ defineFunction(["\\mathop"], {
         symbol: false,
         value: ordargument(body),
     };
+});
+
+const shallowCopy = (obj: {[key: string]: any}) => {
+    const result = {};
+    for (const key in obj) {
+        if (obj.hasOwnProperty(key)) {
+            result[key] = obj[key];
+        }
+    }
+    return result;
+};
+
+defineFunction(["\\limits"], {
+    numArgs: 0,
+}, (context, args, parentBody) => {
+    const prevParseNode = parentBody.pop();
+    if (prevParseNode == null || prevParseNode.type !== "op") {
+        throw new ParseError(
+            "Limit controls must follow a math operator",
+            context.token);
+    }
+    const result = shallowCopy(prevParseNode);
+    result.limits = true;
+    // Remove one level in the tree hierarchy b/c we're going to create a new
+    // one when the return value gets wrapped in a new ParseNode.
+    result.value = prevParseNode.value.value;
+    return result;
+});
+
+defineFunction(["\\nolimits"], {
+    numArgs: 0,
+}, (context, args, parentBody) => {
+    const prevParseNode = parentBody.pop();
+    if (prevParseNode == null || prevParseNode.type !== "op") {
+        throw new ParseError(
+            "Limit controls must follow a math operator",
+            context.token);
+    }
+    const result = shallowCopy(prevParseNode);
+    result.limits = false;
+    // Remove one level in the tree hierarchy b/c we're going to create a new
+    // one when the return value gets wrapped in a new ParseNode.
+    result.value = prevParseNode.value.value;
+    return result;
 });
 
 import "./functions/operators";

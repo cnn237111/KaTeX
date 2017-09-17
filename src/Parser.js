@@ -165,7 +165,7 @@ class Parser {
             if (breakOnInfix && functions[lex.text] && functions[lex.text].infix) {
                 break;
             }
-            const atom = this.parseAtom();
+            const atom = this.parseAtom(body);
             if (!atom) {
                 if (!this.settings.throwOnError && lex.text[0] === "\\") {
                     const errorNode = this.handleUnsupportedCmd();
@@ -226,8 +226,13 @@ class Parser {
                 denomNode = new ParseNode("ordgroup", denomBody, this.mode);
             }
 
-            const value = this.callFunction(funcName, [numerNode, denomNode]);
-            return [new ParseNode(value.type, value, this.mode)];
+            const value =
+                this.callFunction(funcName, [numerNode, denomNode], body);
+            if (value) {
+                return [new ParseNode(value.type, value, this.mode)];
+            } else {
+                return body;
+            }
         } else {
             return body;
         }
@@ -308,10 +313,10 @@ class Parser {
      *
      * @return {?ParseNode}
      */
-    parseAtom() {
+    parseAtom(parentBody) {
         // The body of an atom is an implicit group, so that things like
         // \left(x\right)^2 work correctly.
-        const base = this.parseImplicitGroup();
+        const base = this.parseImplicitGroup(parentBody);
 
         // In text mode, we don't have superscripts or subscripts
         if (this.mode === "text") {
@@ -343,13 +348,14 @@ class Parser {
                 if (superscript) {
                     throw new ParseError("Double superscript", lex);
                 }
-                superscript = this.handleSupSubscript("superscript");
+                superscript =
+                    this.handleSupSubscript("superscript", parentBody);
             } else if (lex.text === "_") {
                 // We got a subscript start
                 if (subscript) {
                     throw new ParseError("Double subscript", lex);
                 }
-                subscript = this.handleSupSubscript("subscript");
+                subscript = this.handleSupSubscript("subscript", parentBody);
             } else if (lex.text === "'") {
                 // We got a prime
                 if (superscript) {
@@ -369,7 +375,8 @@ class Parser {
                 // If there's a superscript following the primes, combine that
                 // superscript in with the primes.
                 if (this.nextToken.text === "^") {
-                    primes.push(this.handleSupSubscript("superscript"));
+                    primes.push(
+                        this.handleSupSubscript("superscript", parentBody));
                 }
                 // Put everything into an ordgroup as the superscript
                 superscript = new ParseNode("ordgroup", primes, this.mode);
@@ -425,12 +432,12 @@ class Parser {
      *
      * @return {?ParseNode}
      */
-    parseImplicitGroup() {
+    parseImplicitGroup(parentBody) {
         const start = this.parseSymbol();
 
         if (start == null) {
             // If we didn't get anything we handle, fall back to parseFunction
-            return this.parseFunction();
+            return this.parseFunction(null, parentBody);
         }
 
         const func = start.result;
@@ -438,14 +445,14 @@ class Parser {
         if (func === "\\left") {
             // If we see a left:
             // Parse the entire left function (including the delimiter)
-            const left = this.parseFunction(start);
+            const left = this.parseFunction(start, parentBody);
             // Parse out the implicit body
             ++this.leftrightDepth;
             const body = this.parseExpression(false);
             --this.leftrightDepth;
             // Check the next token
             this.expect("\\right", false);
-            const right = this.parseFunction();
+            const right = this.parseFunction(null, parentBody);
             return new ParseNode("leftright", {
                 body: body,
                 left: left.value.value,
@@ -453,7 +460,7 @@ class Parser {
             }, this.mode);
         } else if (func === "\\begin") {
             // begin...end is similar to left...right
-            const begin = this.parseFunction(start);
+            const begin = this.parseFunction(start, parentBody);
             const envName = begin.value.name;
             if (!environments.hasOwnProperty(envName)) {
                 throw new ParseError(
@@ -462,7 +469,8 @@ class Parser {
             // Build the environment object. Arguments and other information will
             // be made available to the begin and end methods using properties.
             const env = environments[envName];
-            const args = this.parseArguments("\\begin{" + envName + "}", env);
+            const args = this.parseArguments(
+                "\\begin{" + envName + "}", env, parentBody);
             const context = {
                 mode: this.mode,
                 envName: envName,
@@ -471,7 +479,7 @@ class Parser {
             const result = env.handler(context, args);
             this.expect("\\end", false);
             const endNameToken = this.nextToken;
-            const end = this.parseFunction();
+            const end = this.parseFunction(null, parentBody);
             if (end.value.name !== envName) {
                 throw new ParseError(
                     "Mismatch: \\begin{" + envName + "} matched " +
@@ -543,7 +551,7 @@ class Parser {
             }, "math");
         } else {
             // Defer to parseFunction if it's not a function we handle
-            return this.parseFunction(start);
+            return this.parseFunction(start, parentBody);
         }
     }
 
@@ -553,9 +561,10 @@ class Parser {
      * it is provided as an argument, or it's the next group in the input.
      *
      * @param {ParseFuncOrArgument=} baseGroup optional as described above
+     * @param {Array<ParseNode>} parentBody
      * @return {?ParseNode}
      */
-    parseFunction(baseGroup) {
+    parseFunction(baseGroup, parentBody) {
         if (!baseGroup) {
             baseGroup = this.parseGroup();
         }
@@ -575,10 +584,14 @@ class Parser {
                         baseGroup.token);
                 }
 
-                const args = this.parseArguments(func, funcData);
+                const args = this.parseArguments(func, funcData, parentBody);
                 const token = baseGroup.token;
-                const result = this.callFunction(func, args, token);
-                return new ParseNode(result.type, result, this.mode);
+                const result = this.callFunction(func, args, token, parentBody);
+                if (result) {
+                    return new ParseNode(result.type, result, this.mode);
+                } else {
+                    return null;
+                }
             } else {
                 return baseGroup.result;
             }
@@ -590,13 +603,13 @@ class Parser {
     /**
      * Call a function handler with a suitable context and arguments.
      */
-    callFunction(name, args, token) {
+    callFunction(name, args, token, parentBody) {
         const context = {
             funcName: name,
             parser: this,
             token,
         };
-        return functions[name].handler(context, args);
+        return functions[name].handler(context, args, parentBody);
     }
 
     /**
@@ -606,7 +619,7 @@ class Parser {
      * @param {{numArgs:number,numOptionalArgs:number|undefined}} funcData
      * @return the array of arguments
      */
-    parseArguments(func, funcData) {
+    parseArguments(func, funcData, parentBody) {
         const totalArgs = funcData.numArgs + funcData.numOptionalArgs;
         if (totalArgs === 0) {
             return [];
@@ -652,7 +665,7 @@ class Parser {
                 const argGreediness =
                     functions[arg.result].greediness;
                 if (argGreediness > baseGreediness) {
-                    argNode = this.parseFunction(arg);
+                    argNode = this.parseFunction(arg, parentBody);
                 } else {
                     throw new ParseError(
                         "Got function '" + arg.result + "' as " +
